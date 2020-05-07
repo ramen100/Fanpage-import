@@ -91,6 +91,7 @@ class FacebookFanpageImportAdminSettings {
 		register_setting( 'fbfpi_options', 'fbfpi_appsecret' );
 		register_setting( 'fbfpi_options', 'fbfpi_accesstoken' );
 		register_setting( 'fbfpi_options', 'fbfpi_accesstoken_expire' );
+		register_setting( 'fbfpi_options', 'fbfpi_reimport_format' );
 		register_setting( 'fbfpi_options', 'fbfpi_fanpage_stream_language' );
 		register_setting( 'fbfpi_options', 'fbfpi_import_interval' );
 		register_setting( 'fbfpi_options', 'fbfpi_import_num' );
@@ -218,6 +219,18 @@ class FacebookFanpageImportAdminSettings {
 		echo '<label for="fbfpi_accesstoken_expire">' . __( 'Access Token Expiration', 'facebook-fanpage-import' ) . '</label>';
 		echo '<div class="input">';
 		echo '<input type="text" name="fbfpi_accesstoken_expire" id="fbfpi_accesstoken_expire" disabled="disabled" value="' . (($fbfpi_accesstoken_expire > 0) ? date("Y-m-d H:i:s", $fbfpi_accesstoken_expire) : __( 'never', 'facebook-fanpage-import' )) . '" /><br /><small>' . __( 'Fomat is Y-m-d H:i:s, UTC. If you have undergone the Facebook review, your token may ever expire.', 'facebook-fanpage-import' ) . '</small>';
+		echo '</div>';
+		echo '</div>';
+		
+		
+		/**
+		 * fbfpi_reimport_format
+		 */
+		echo '<div class="fbfpi-form-field">';
+		echo '<label for="fbfpi_reimport_format">' . __( 'Format of Exported WordPress Posts', 'facebook-fanpage-import' ) . '</label>';
+		echo '<div class="input">';
+		echo '<textarea name="fbfpi_reimport_format" id="fbfpi_reimport_format">'. $reimport_format . '</textarea><br /><small>' . __( 'The format of posts exported from wordpress to facebook to avoid re-imports.' ) . '</small>';
+		echo '<br /><small>' . __( 'Use #post_title and #post_content as placeholders. Otherwise leave empty', 'facebook-fanpage-import' ) . '.</small>';
 		echo '</div>';
 		echo '</div>';
 
