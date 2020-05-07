@@ -93,6 +93,12 @@ class FacebookFanpageImportFacebookStream {
 	var $post_format;
 
 	/**
+	 * @var string
+	 * @since 1.0.0
+	 */
+	var $reimport_format;
+
+	/**
 	 * @var int
 	 * @since 1.0.0
 	 */
@@ -120,6 +126,7 @@ class FacebookFanpageImportFacebookStream {
 		$this->post_format     = get_option( 'fbfpi_insert_post_format' );
 		$this->author_id       = get_option( 'fbfpi_insert_user_id' );
 		$this->term_id         = get_option( 'fbfpi_insert_term_id' );
+		$this->reimport_format = get_option( 'fbfpi_reimport_format' );
 
 		$this->fpc = new FacebookFanpageConnect( $this->page_id, '', get_locale() );
 
@@ -225,15 +232,26 @@ class FacebookFanpageImportFacebookStream {
 					continue;
 				}
 
+				$post_title_raw   = $this->get_post_title( $entry );
+				$post_title       = $this->sanitize_title($post_title_raw);
+				$post_date        = $this->get_post_date( $entry );
+				$entry->message   = $this->replace_urls_by_links( $entry->message );
+				$new_content = ($entry->shared) ? __('Shared post') . ':' . chr(13) : '';
+				$new_content .= $this->crop_title($entry->message, $post_title_raw);
+				$post_content = $entry->message = $new_content;
+				
+				
+				if ($this->entry_exists_wp ( $post_date, $post_content ) ) // If entry exists as WP Post
+					{
+					$skip_existing_count ++;
+					continue;
+					}
+					
 				$i ++;
 
-				$post_title   = $this->get_post_title( $entry );
 				$post_excerpt = $this->get_post_excerpt( $entry );
 				$picture_url  = $this->get_post_picture_url( $entry );
-				$post_date    = $this->get_post_date( $entry );
 				$tags         = $this->get_post_tags( $entry );
-
-				$entry->message = $this->replace_urls_by_links( $entry->message );
 
 				// set category
 				if ( 'none' !== $this->term_id ) {
@@ -258,6 +276,9 @@ class FacebookFanpageImportFacebookStream {
 
 					case 'link':
 						$post->post_content = $this->get_link_content( $entry, $attach_id );
+						
+						set_post_format($post_id, 'link');
+						
 						break;
 
 					case 'status':
@@ -266,6 +287,8 @@ class FacebookFanpageImportFacebookStream {
 						if ( ! empty( $attach_id ) ) {
 							set_post_thumbnail( $post_id, $attach_id );
 						}
+	  
+						set_post_format($post_id, 'status');
 
 						break;
 
@@ -282,6 +305,8 @@ class FacebookFanpageImportFacebookStream {
 						if ( ! empty( $attach_id ) ) {
 							set_post_thumbnail( $post_id, $attach_id );
 						}
+						
+						set_post_format($post_id, 'image');
 
 						break;
 
@@ -297,7 +322,9 @@ class FacebookFanpageImportFacebookStream {
 							$post->post_content .= $this->get_photo_content( $temp_entry, $attach_id );
 						}
 						unset($temp_entry);
-
+						
+						set_post_format($post_id, 'gallery');
+						
 						break;
 
 					case 'video':
@@ -306,6 +333,8 @@ class FacebookFanpageImportFacebookStream {
 						if ( ! empty( $attach_id ) ) {
 							set_post_thumbnail( $post_id, $attach_id );
 						}
+	  
+						set_post_format($post_id, 'video');
 
 						break;
 
@@ -315,6 +344,8 @@ class FacebookFanpageImportFacebookStream {
 						if ( ! empty( $attach_id ) ) {
 							set_post_thumbnail( $post_id, $attach_id );
 						}
+						
+						set_post_format($post_id, 'event');
 
 						break;
 
@@ -465,6 +496,37 @@ class FacebookFanpageImportFacebookStream {
 	}
 
 	/**
+	* New function to check for same post as WP post (re-import)
+	*
+	* @param $entry
+	*
+	* @return bool
+	*
+	* @since 1.0.1
+	*/
+	
+	private function entry_exists_wp ($date, $content) {
+		global $wpdb;
+		
+		$sql = $wpdb->prepare( " SELECT * FROM $wpdb->posts WHERE post_date = '%s' AND post_type='%s' ", $date, $this->post_type );
+		
+		$posts_wp = $wpdb->get_results( $sql );
+		
+		if ( !empty($posts_wp) ) { 
+			$search = preg_quote(substr($content, 0, 100));
+			$regex = "/" . preg_replace('/\s+/', '\s*\n*', $search) . "/";
+			
+			foreach ($posts_wp as $wp_post) {
+				preg_match($regex, trim(strip_tags($wp_post->post_content)), $matches);
+			}
+			if (count($matches)>0) {
+				return true;
+			}
+		}
+		return false;
+	}
+		
+	/**
 	 * Getting post title
 	 *
 	 * @param $entry
@@ -479,17 +541,22 @@ class FacebookFanpageImportFacebookStream {
 			if ( property_exists( $entry, 'story' ) && '' != $entry->story ) {
 				$post_title     = $entry->story;
 				$entry->message = '';
-			} else {
-				$post_title     = __( 'Untitled post', 'facebook-fanpage-import' );
-				$entry->message = '';
+			} elseif ( property_exists( $entry, 'description' ) && '' != $entry->description ) {
+				$post_title = $entry->description;
 			}
 		} elseif ( property_exists( $entry, 'message' ) && '' != $entry->message ) {
 			$post_title = $entry->message;
-		} elseif ( property_exists( $entry, 'description' ) && '' != $entry->description && '' == $post_title ) {
-			$post_title = $entry->description;
+		} else {
+			$post_title     = __( 'Untitled post', 'facebook-fanpage-import' );
+			$entry->message = '';
 		}
 
 		$post_title = $this->filter_title( $post_title );
+		
+		// title for "Page has added an event"
+		if ($entry->type == 'event') {
+			$post_title = __( 'New event', 'facebook-fanpage-import' ) . ": ". $entry->title;
+		} 
 
 		/**
 		 * Allow overrides.
@@ -506,34 +573,59 @@ class FacebookFanpageImportFacebookStream {
 	}
 
 	/**
-	 * Filter title
+	 * Filter title: Get raw title with pattern
 	 *
 	 * @param $string
 	 *
 	 * @return array|mixed
 	 */
 	private function filter_title( $string ) {
-		$title = explode( ':', $string );
-		$title = $title[ 0 ];
-
-		$title = explode( '!', $title );
-		$title = $title[ 0 ];
-
-		$title = str_replace( '+', '', $title );
-
-		$title = trim( $title );
-
-		$desired_width = 50;
-
-		if ( strlen( $title ) > $desired_width ) {
-			$title = wordwrap( $title, $desired_width );
-			$i     = strpos( $title, "\n" );
-			if ( $i ) {
-				$title = substr( $title, 0, $i );
+		
+		// get parts of reimport_format
+		$format = $this->get_reimport_pattern();
+		
+		if (!empty($format)) {
+		
+			// get Heading Pattern
+			if ($format['default']) {
+				$pattern = '/\Q'. $format['pre'] . '\E.*\Q'.$format['inter'].'\E/s';
+			} else {
+				$pattern = '/\Q'. $format['inter'] . '\E.*\Q'.$format['post'].'\E/s';
 			}
-			$title = $title . ' ...';
+			
+			// search for title using pattern
+			preg_match($pattern, $string, $found);
+			
+			$result = $found[0];
+			
+		} else {
+			$result = $string;
 		}
-
+		
+			// if no title found using reimport pattern, search for other common formats
+			// Title will be return raw, with patterns, newlines, punctuation for cropping, title is sanitized later
+			if ((empty($result)) || (is_null($result))) {
+				
+				/* Find following patterns, separated by | (or else)
+				*	^[+ =*-]+.*\w[!?:.,]*[-+ =*]+ => === yourTitle === or +++ yourTitle +++ or ** yourTitle? ** or *yourTitle!*
+				*
+				*  .*?\:\n => everything excluding first : followed by newline
+				*
+				*  .*?[!]+ => everything including first !
+				*
+				*  .*?[?]+ => everything including first ?
+				*
+				*  ^.*(?=\n\n) => everything from start to first double newline 
+				*/
+			
+				$pattern = '/^[+ =*-]+.*\w[!?:.,]*[-+ =*]+|.*?\:\n|.*?[!]+|.*?[?]+|^.*(?=\n\n)/u';
+				
+				preg_match($pattern, $string, $found);
+			}
+		
+		$title = $found[0];
+		
+		
 		/**
 		 * Allow overrides.
 		 *
@@ -546,7 +638,94 @@ class FacebookFanpageImportFacebookStream {
 		return apply_filters( 'fbfpi_entry_title', $title, $string );
 	}
 
+	
 	/**
+	* strip pattern from raw title
+	*
+	* @var $string: the post containing the title
+	*
+	* return $title: the extracted title
+	*/
+	private function sanitize_title ($string) {
+
+		$title = trim($string, "-=+*: \n");
+
+		$desired_width = 50;
+
+		if ( strlen( $title ) > $desired_width ) {
+			$title = wordwrap( $title, $desired_width );
+			$i     = strpos( $title, "\n" );
+			if ( $i ) {
+				$title = substr( $title, 0, $i );
+			}
+			$title = $title . ' ...';
+		}
+
+		return apply_filters( 'fbfpi_entry_title_sanitized', $title, $string );
+	}
+
+	/**
+	* delete title from entry message and trim
+	*
+	* @param $string including title
+	*
+	* @return $string without title
+	*
+	*/
+	private function crop_title ($string, $title) {
+		
+		// delete title
+		$string = trim(str_replace($title, '', $string));
+		
+		return $string;
+	}
+	
+	
+	/**
+	* get reimport_format pattern from settings
+	*
+	* @return $array 
+	* 
+	* default	$bool 		true if #post_title before #post_content
+	* first		$string		pattern before #post_title
+	* inter		$string		pattern between #post_title and #post_content
+	* post		$string		pattern after #post_content
+	*
+	*/
+	private function get_reimport_pattern() {
+		
+		// does #post_title come before #post_content or not?
+			if (strpos($this->reimport_format, '#post_title') < strpos($this->reimport_format, '#post_content')) {
+				$pattern['default'] = true;
+				$first = '#post_title';
+				$second = '#post_content';
+			} else {
+				$pattern['default'] = false;
+				$first = '#post_content';
+				$second = '#post_title';
+			}
+			// following comments consider default: title before content
+		
+			// get Part before #post_title
+			if (preg_match('/.*(?='.$first.')/s', $this->reimport_format, $found)) {
+				$pattern['pre'] = $found[0];
+			}
+			
+			// get Part between #post_title and #post_content, delete possible linebreak
+			if (preg_match('/(?<='.$first.').*(?='.$second.')/s', $this->reimport_format, $found)) {
+				$pattern['inter'] = str_replace(array("\r", "\n"), '',$found[0]);
+			}
+			
+			// get Part after #post_content
+			if (preg_match('/(?<='.$second.').*/s', $this->reimport_format, $found)) {
+				$pattern['post'] = $found[0];
+			}
+			
+		return $pattern;
+		
+	}
+	
+	/*
 	 * Getting post excerpt
 	 *
 	 * @param $entry
@@ -556,10 +735,10 @@ class FacebookFanpageImportFacebookStream {
 	 */
 	private function get_post_excerpt( $entry ) {
 		$post_excerpt = '';
-		if ( property_exists( $entry, 'description' ) ) {
-			$post_excerpt = $entry->description;
-		}else if ( property_exists( $entry, 'message' ) ) {
+		if ( isset( $entry->message ) ) {
 			$post_excerpt = $entry->message;
+		} else if ( isset( $entry->description ) ) {
+			$post_excerpt = $entry->description;
  		}
 
 		/**
